@@ -6,16 +6,12 @@ from dotenv import load_dotenv
 
 
 load_dotenv()
-# Get database connection details from environment variables (you can set these in your system or use a .env file)
-DB_HOST = os.getenv("DB_HOST", "localhost")  # Default to 'localhost' if not set
-DB_USER = os.getenv("DB_USER", "DESKTOP-RUAG96D\\ORACLE")  # Default to your username if not set
-DB_DRIVER = os.getenv("DB_DRIVER", "ODBC+Driver+17+for+SQL+Server")  # Default to your driver
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_USER = os.getenv("DB_USER", "DESKTOP-RUAG96D\\ORACLE")
+DB_DRIVER = os.getenv("DB_DRIVER", "ODBC+Driver+17+for+SQL+Server")
 DB_CONNECTION_TYPE = os.getenv("DB_CONNECTION_TYPE", "mssql+pyodbc")
 
 def get_database_url(db_name: str) -> str:
-    """
-    Constructs the database URL dynamically based on the provided database name.
-    """
     return f"{DB_CONNECTION_TYPE}://{DB_USER}@{DB_HOST}/{db_name}?driver={DB_DRIVER}&trusted_connection=yes"
 
 # Use the function to get the URL dynamically
@@ -43,7 +39,7 @@ def db_connect():
 def db_create():
     """Create the necessary tables in the database."""
     try:
-        Base.metadata.create_all(bind=source_engine)  # Use source engine for creating tables
+        Base.metadata.create_all(bind=source_engine)
         print("Tables created successfully.")
     except SQLAlchemyError as e:
         print(f"Error creating tables: {e}")
