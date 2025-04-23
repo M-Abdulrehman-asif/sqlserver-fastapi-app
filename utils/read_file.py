@@ -1,10 +1,34 @@
-from fastapi import UploadFile
+from fastapi import UploadFile, HTTPException
 import pandas as pd
 from io import BytesIO
 
 
-# Helper function to read the Excel file
 async def read_file(file: UploadFile):
-    contents = await file.read()
-    sheets_data = pd.read_excel(BytesIO(contents), sheet_name=None)  # Read all sheets
-    return sheets_data
+    try:
+        contents = await file.read()
+        if not contents:
+            raise HTTPException(
+                status_code=400,
+                detail="Uploaded file is empty."
+            )
+
+        xls = pd.ExcelFile(BytesIO(contents))
+        all_sheets_df = {
+            sheet_name: xls.parse(sheet_name)
+            for sheet_name in xls.sheet_names
+        }
+
+        for sheet_name, df in all_sheets_df.items():
+            if not isinstance(df, pd.DataFrame):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Sheet '{sheet_name}' could not be parsed as DataFrame"
+                )
+
+        return all_sheets_df
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid Excel file: {str(e)}"
+        )
