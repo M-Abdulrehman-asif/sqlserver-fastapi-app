@@ -42,7 +42,6 @@ class DatabaseHandler:
     def get_session(self):
         return self.session_factory()
 
-
     def connect_db(self):
         self.engine = create_engine(self.base_url)
         self.session_factory = sessionmaker(bind=self.engine)

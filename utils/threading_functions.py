@@ -1,5 +1,5 @@
 from database.dest_db import TargetDatabaseHandler
-from utils.handle_functions import migrate_known_tables, handle_tables
+from utils.handle_functions import migrate_known_tables, reflect_metadata
 from database.source_db import DatabaseHandler
 from utils.read_file import read_file_sync
 from utils.insert_data import insert_data_in_table
@@ -28,10 +28,11 @@ def run_migration(source_db: str, target_db: str):
 
     try:
         source_handler.connect_db()
-        target_handler.create_db()
-        target_handler.connect()
+        source_metadata = reflect_metadata(source_handler)
 
-        source_metadata = handle_tables(source_handler, target_handler)
+        target_handler.create_db()
+        target_handler.init_db(source_metadata)
+
         inserted_counts = migrate_known_tables(
             source_handler.session,
             target_handler.session,

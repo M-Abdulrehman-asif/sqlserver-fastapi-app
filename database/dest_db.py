@@ -47,10 +47,12 @@ class TargetDatabaseHandler:
         Session = sessionmaker(bind=self.engine)
         self.session = Session()
 
-    def init_db(self):
+    def init_db(self, source_metadata):
+        self.connect()
         if not self.engine:
             raise Exception("Engine not created. Call connect() first.")
-        Base.metadata.create_all(self.engine)
+        source_metadata.create_all(bind=self.engine)
+        print("Tables created in target database from source metadata.")
 
     def disconnect(self):
         if self.session:
