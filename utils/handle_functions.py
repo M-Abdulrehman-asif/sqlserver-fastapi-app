@@ -1,4 +1,4 @@
-from sqlalchemy import MetaData, select
+from sqlalchemy import MetaData, select, func
 from fastapi import HTTPException
 
 
@@ -20,14 +20,19 @@ def handle_tables(source_handler, target_handler):
 
 def handle_users(source_session, target_session, users_table):
     try:
-        source_data = source_session.execute(select(users_table)).fetchall()
-        rows_to_insert = []
+        max_id = target_session.execute(
+            select(users_table.c.id).order_by(users_table.c.id.desc()).limit(1)
+        ).scalar() or 0
 
+        target_user_ids = {row.id for row in target_session.execute(select(users_table.c.id))}
+        source_data = source_session.execute(select(users_table)).fetchall()
+
+        rows_to_insert = []
         for row in source_data:
             row_dict = dict(row._mapping)
-            stmt = select(users_table).where(users_table.c.email == row_dict['email']).limit(1)
-            result = target_session.execute(stmt).first()
-            if not result:
+            new_id = max_id + row_dict['id']
+            if new_id not in target_user_ids:
+                row_dict['id'] = new_id
                 rows_to_insert.append(row_dict)
 
         if rows_to_insert:
@@ -35,85 +40,87 @@ def handle_users(source_session, target_session, users_table):
             target_session.commit()
 
         return len(rows_to_insert)
-
     except Exception as e:
         target_session.rollback()
         raise HTTPException(status_code=500, detail=f"Error migrating users: {str(e)}")
 
 
+
 def handle_posts(source_session, target_session, posts_table):
     try:
-        source_posts = source_session.execute(select(posts_table)).fetchall()
+        max_id = target_session.execute(
+            select(posts_table.c.id).order_by(posts_table.c.id.desc()).limit(1)
+        ).scalar() or 0
 
-        existing_post_ids = {p[0] for p in target_session.execute(select(posts_table.c.id))}
+        users_table = posts_table.metadata.tables['users']
+        valid_user_ids = {row.id for row in target_session.execute(select(users_table.c.id))}
 
-        posts_to_insert = [
-            dict(p._mapping)
-            for p in source_posts
-            if p.id not in existing_post_ids
-        ]
+        source_posts = source_session.execute(
+            select(posts_table).where(posts_table.c.author_id.in_(valid_user_ids))
+        ).fetchall()
+
+        target_post_ids = {row.id for row in target_session.execute(select(posts_table.c.id))}
+
+        posts_to_insert = []
+        for post in source_posts:
+            p_dict = dict(post._mapping)
+            new_id = max_id + p_dict['id']
+            if new_id not in target_post_ids:
+                p_dict['id'] = new_id
+                posts_to_insert.append(p_dict)
 
         if posts_to_insert:
-            print(f"Inserting {len(posts_to_insert)} posts")
             target_session.execute(posts_table.insert().values(posts_to_insert))
+            target_session.commit()
 
         return len(posts_to_insert)
-
     except Exception as e:
         target_session.rollback()
         raise HTTPException(status_code=500, detail=f"Error migrating posts: {str(e)}")
 
 
+
 def handle_comments(source_session, target_session, comments_table):
     try:
-        posts_table = comments_table.metadata.tables['posts']
+        max_id = target_session.execute(
+            select(comments_table.c.id).order_by(comments_table.c.id.desc()).limit(1)
+        ).scalar() or 0
 
-        source_comments = [
-            dict(row._asdict())
-            for row in source_session.execute(select(comments_table))
-        ]
+        posts_table = comments_table.metadata.tables['posts']
+        source_comments = source_session.execute(select(comments_table)).fetchall()
 
         if not source_comments:
-            print("No comments to migrate")
             return 0
 
-        post_ids = {c['post_id'] for c in source_comments if 'post_id' in c}
+        post_ids_in_comments = {row.post_id for row in source_comments}
+        existing_post_ids = {row.id for row in target_session.execute(
+            select(posts_table.c.id).where(posts_table.c.id.in_(post_ids_in_comments))
+        )}
 
-        if post_ids:
-            post_ids_list = list(post_ids)
-
-            existing_posts = {
-                row[0] for row in
-                target_session.execute(
-                    select(posts_table.c.id).where(posts_table.c.id.in_(post_ids_list))
-                )
-            }
-            missing_posts = post_ids - existing_posts
-            if missing_posts:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Missing post IDs: {sorted(missing_posts)}"
-                )
+        missing_post_ids = post_ids_in_comments - existing_post_ids
+        if missing_post_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing post IDs: {sorted(missing_post_ids)}"
+            )
 
         existing_comments = {
-            row[0] for row in
-            target_session.execute(select(comments_table.c.id))
+            (row.post_id, row.text)
+            for row in target_session.execute(select(comments_table.c.post_id, comments_table.c.text))
         }
 
-        comments_to_insert = [
-            c for c in source_comments
-            if c.get('id') not in existing_comments
-        ]
+        comments_to_insert = []
+        for c in source_comments:
+            c_dict = dict(c._mapping)
+            if (c_dict['post_id'], c_dict['text']) not in existing_comments:
+                c_dict['id'] = max_id + c_dict['id']
+                comments_to_insert.append(c_dict)
 
         if comments_to_insert:
-            target_session.execute(
-                comments_table.insert(),
-                comments_to_insert
-            )
+            target_session.execute(comments_table.insert().values(comments_to_insert))
             target_session.commit()
 
         return len(comments_to_insert)
-
     except HTTPException:
         raise
     except Exception as e:
@@ -124,16 +131,22 @@ def handle_comments(source_session, target_session, comments_table):
         )
 
 
+
 def handle_products(source_session, target_session, products_table):
     try:
-        source_data = source_session.execute(select(products_table)).fetchall()
-        rows_to_insert = []
+        max_id = target_session.execute(
+            select(products_table.c.id).order_by(products_table.c.id.desc()).limit(1)
+        ).scalar() or 0
 
+        target_product_ids = {row.id for row in target_session.execute(select(products_table.c.id))}
+        source_data = source_session.execute(select(products_table)).fetchall()
+
+        rows_to_insert = []
         for row in source_data:
             row_dict = dict(row._mapping)
-            stmt = select(products_table).where(products_table.c.id == row_dict['id']).limit(1)
-            result = target_session.execute(stmt).first()
-            if not result:
+            new_id = max_id + row_dict['id']
+            if new_id not in target_product_ids:
+                row_dict['id'] = new_id
                 rows_to_insert.append(row_dict)
 
         if rows_to_insert:
@@ -141,10 +154,10 @@ def handle_products(source_session, target_session, products_table):
             target_session.commit()
 
         return len(rows_to_insert)
-
     except Exception as e:
         target_session.rollback()
         raise HTTPException(status_code=500, detail=f"Error migrating products: {str(e)}")
+
 
 
 def migrate_data(source_session, target_session, table):
